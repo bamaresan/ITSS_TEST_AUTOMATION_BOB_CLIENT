@@ -1,0 +1,121 @@
+*-----------------------------------------------------------------------------
+* <Rating>570</Rating>
+*-----------------------------------------------------------------------------
+    SUBROUTINE TAUT.OFS.DATE.VALUE.CHK(Y.APPL,Y.FIELD,Y.VALUE,Y.RET.VALUE)
+*---------------------------------------------------------------------------*
+* Author       : Sunder
+* Date         : 04 Oct 2016
+* Description  : Routine to check the OFS field sent in the IN argument is DATE or FQU field
+*               and change the value of the source area date according to target environment.
+* Incoming Arg : 1. Y.APPL      - Application name
+*                2. Y.FIELD     - Field name which is to be checked for Date/FQU
+*                3. Y.VALUE     - OFS data value for the corresponding field
+* Outgoing Arg : 1. Y.RET.VALUE - Modified date based on target environment
+*---------------------------------------------------------------------------------------------
+* Modifications
+*
+*---------------------------------------------------------------------------------------------
+
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT I_F.STANDARD.SELECTION
+    $INCLUDE TAUT.BP I_F.TAUT.PARAMETER
+
+    IF Y.APPL EQ "USER" THEN RETURN
+
+    GOSUB INIT
+    GOSUB PROCESS
+
+    RETURN
+*-----------------------------------------------------------------------------------------*
+INIT:
+*----*
+
+    FN.STANDARD.SELECTION = 'F.STANDARD.SELECTION'
+    F.STANDARD.SELECTION = ''
+    CALL OPF(FN.STANDARD.SELECTION,F.STANDARD.SELECTION)
+
+    FN.TAUT.PARAM = 'F.TAUT.PARAMETER'
+    F.TAUT.PARAM = ''
+    CALL OPF(FN.TAUT.PARAM,F.TAUT.PARAM)
+    OFS.SS.REC = ''
+
+    CALL GET.STANDARD.SELECTION.DETS(Y.APPL,OFS.SS.REC)
+    FIELD.NAME.LIST = OFS.SS.REC<SSL.SYS.FIELD.NAME>
+    SYS.TYPE.LIST   = OFS.SS.REC<SSL.SYS.TYPE>
+    SYS.VAL.PROG.LIST   = OFS.SS.REC<SSL.SYS.VAL.PROG>
+
+    Y.FIELD.TYPE = ''
+    FLD.POS = ''
+    Y.RET.VALUE = ''
+
+
+    RETURN
+*-----------------------------------------------------------------------------------------*
+PROCESS:
+*------*
+
+    LOCATE Y.FIELD IN FIELD.NAME.LIST<1,1> SETTING FLD.POS THEN
+        Y.FIELD.TYPE = SYS.VAL.PROG.LIST<1,FLD.POS>
+        IF ((Y.FIELD.TYPE[4,1] EQ 'D') AND (Y.FIELD.TYPE[5,1] EQ '&' OR Y.FIELD.TYPE[5,1] EQ '')) OR (Y.FIELD.TYPE[4,3] EQ 'FQU') OR Y.FIELD.TYPE[4,5] EQ 'MATLC' THEN
+
+            GOSUB READ.TAUT.PARAM
+
+            IF Y.TAUT.PARAM.DATE EQ '' THEN RETURN
+
+            IF Y.FIELD.TYPE[4,3] EQ 'FQU' THEN
+                Y.SRC.DATE.VALUE = Y.VALUE[1,8]
+            END ELSE
+                Y.SRC.DATE.VALUE = Y.VALUE
+            END
+            BEGIN CASE
+
+            CASE (Y.SRC.DATE.VALUE AND Y.TAUT.PARAM.DATE) AND (Y.SRC.DATE.VALUE EQ Y.TAUT.PARAM.DATE)
+                IF Y.FIELD.TYPE[4,3] EQ 'FQU' THEN
+
+                    Y.LEN = LEN(Y.VALUE)
+                    IF Y.VALUE[9,1] EQ 'M' THEN
+                        Y.RET.VALUE = TODAY:Y.VALUE[9,3]:TODAY[7,2]
+                    END ELSE
+                        Y.RET.VALUE = TODAY:Y.VALUE[9,Y.LEN]
+                    END
+                END ELSE
+                    Y.RET.VALUE = TODAY
+                END
+
+            CASE 1
+                YDAYS = 'C'
+                CALL CDD ("",Y.TAUT.PARAM.DATE,Y.SRC.DATE.VALUE,YDAYS)
+                Y.DATE = TODAY
+                CALL CDT ("",Y.DATE,YDAYS)
+                IF Y.FIELD.TYPE[4,3] EQ 'FQU' THEN
+
+                    Y.LEN = LEN(Y.VALUE)
+                    IF Y.VALUE[9,1] EQ 'M' THEN
+                        Y.RET.VALUE = Y.DATE:Y.VALUE[9,3]:Y.DATE[7,2]
+                    END ELSE
+                        Y.RET.VALUE = Y.DATE:Y.VALUE[9,Y.LEN]
+                    END
+                END ELSE
+                    Y.RET.VALUE = Y.DATE
+                END
+            END CASE
+        END
+    END
+
+    RETURN
+*-----------------------------------------------------------------------------------------*
+READ.TAUT.PARAM:
+*--------------*
+    Y.TAUT.PARAM.DATE = ''
+    R.TAUT.PARAM = ''
+
+    CALL F.READ(FN.TAUT.PARAM,'SYSTEM',R.TAUT.PARAM,F.TAUT.PARAM,Y.TAUT.PARAM.ERR)
+
+    IF R.TAUT.PARAM THEN
+        Y.TAUT.PARAM.DATE = R.TAUT.PARAM<TAUT.SOURCE.SYSTEM.DATE>
+    END
+
+    RETURN
+*-----------------------------------------------------------------------------------------*
+END

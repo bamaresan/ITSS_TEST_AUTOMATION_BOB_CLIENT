@@ -1,0 +1,119 @@
+*-----------------------------------------------------------------------------
+* <Rating>820</Rating>
+*-----------------------------------------------------------------------------
+    SUBROUTINE TAUT.OFS.RETURN.ERR.MSG
+
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT TAUT.BP I_F.TAUT.PARAMETER
+
+
+    GOSUB INIT
+    GOSUB OPEN.FILES
+    GOSUB PROCESS
+
+    RETURN
+
+INIT:
+*----
+    Y.PARAM.ID = 'SYSTEM'
+    RETURN
+
+OPEN.FILES:
+*----------
+    FN.TAUT.PARAMETER = 'F.TAUT.PARAMETER'
+    F.TAUT.PARAMETER = ''
+    CALL OPF(FN.TAUT.PARAMETER, F.TAUT.PARAMETER)
+
+    CALL CACHE.READ(FN.TAUT.PARAMETER, Y.PARAM.ID, R.TAUT.PARAMETER, Y.PARAM.ERR)
+    IF R.TAUT.PARAMETER THEN
+        Y.ERR.WORD.ARRAY = R.TAUT.PARAMETER<TAUT.TGT.ERROR.GRP>
+        Y.ARRAY.CNT = DCOUNT(Y.ERR.WORD.ARRAY,VM)
+
+        FN.TGT.UPL.REPORTS = R.TAUT.PARAMETER<TAUT.TGT.UPL.REPORTS>
+        F.TGT.UPL.REPORTS = ""
+        CALL OPF(FN.TGT.UPL.REPORTS,F.TGT.UPL.REPORTS)
+
+        FN.TGT.UPL.FAIL.GRP = R.TAUT.PARAMETER<TAUT.TGT.UPL.REPORTS>:'/ERR.GROUP'
+        F.TGT.UPL.FAIL.GRP = ""
+        CALL OPF(FN.TGT.UPL.FAIL.GRP, F.TGT.UPL.FAIL.GRP)
+
+    END
+    RETURN
+
+PROCESS:
+*-------
+
+    SEL.CMD = 'SELECT ':FN.TGT.UPL.REPORTS
+    CALL EB.READLIST(SEL.CMD, SEL.LIST,'' , NO.OF.REC ,'')
+    I = 1
+    LOOP
+    WHILE I LE NO.OF.REC
+        Y.ERR.ID = SEL.LIST<I>
+        IF Y.ERR.ID EQ 'ERR.GROUP' THEN
+            I = I+1
+            CONTINUE
+        END
+        CALL F.READ(FN.TGT.UPL.REPORTS, Y.ERR.ID, R.TGT.UPL.REPORTS, F.TGT.UPL.REPORTS, Y.ERR.REP)
+        Y.FIR.ARRAY = R.TGT.UPL.REPORTS
+        Y.ERR.MSG.TOT.CNT = DCOUNT(Y.FIR.ARRAY,FM)
+        J = 2
+        LOOP
+        WHILE J LE Y.ERR.MSG.TOT.CNT
+            Y.ERR.MSG.TOT = Y.FIR.ARRAY<J>
+            Y.ERR.MSG = FIELD(Y.ERR.MSG.TOT,',',5)
+            Y.ERR.MSG = FIELD(Y.ERR.MSG,'=',2)
+            CHANGE ' ' TO VM IN Y.ERR.MSG
+            Y.ERR.GRP.FLAG = 0
+            K = 1
+
+            LOOP
+            WHILE K LE Y.ARRAY.CNT
+                Y.ERR.WORD = Y.ERR.WORD.ARRAY<1,K>
+                FINDSTR Y.ERR.WORD IN Y.ERR.MSG<1,1> SETTING Y.POS THEN
+                    Y.ERR.GRP.FLAG = 1
+                    Y.ERR.GRP.ID = ''
+                    Y.ERR.GRP.ID = Y.ERR.WORD:".csv"
+                    R.TGT.UPL.FAIL.GRP = ''
+                    READ R.TGT.UPL.FAIL.GRP FROM F.TGT.UPL.FAIL.GRP,Y.ERR.GRP.ID ELSE R.TGT.UPL.FAIL.GRP = ''
+                    IF NOT(R.TGT.UPL.FAIL.GRP) THEN
+                        Y.DELIM = ","
+                        R.TGT.UPL.FAIL.GRP = "Application":Y.DELIM:"Function":Y.DELIM:"Source Transaction ID":Y.DELIM:"Target Transaction ID"
+                        R.TGT.UPL.FAIL.GRP<-1> = Y.ERR.MSG.TOT
+                        WRITE R.TGT.UPL.FAIL.GRP TO F.TGT.UPL.FAIL.GRP, Y.ERR.GRP.ID
+                    END ELSE
+                        R.TGT.UPL.FAIL.GRP<-1> = Y.ERR.MSG.TOT
+                        WRITE R.TGT.UPL.FAIL.GRP TO F.TGT.UPL.FAIL.GRP, Y.ERR.GRP.ID
+                    END
+                END
+                K++
+            REPEAT
+            IF NOT(Y.ERR.GRP.FLAG) THEN
+                Y.ERR.GRP.FLAG = 1
+                Y.ERR.WORD = 'OTHERS'
+                Y.ERR.GRP.ID = ''
+                Y.ERR.GRP.ID = Y.ERR.WORD:".csv"
+                R.TGT.UPL.FAIL.GRP1 = ''
+
+                READ R.TGT.UPL.FAIL.GRP1 FROM F.TGT.UPL.FAIL.GRP,Y.ERR.GRP.ID ELSE R.TGT.UPL.FAIL.GRP1 = ''
+
+                IF NOT(R.TGT.UPL.FAIL.GRP1) THEN
+                    Y.DELIM = ","
+                    R.TGT.UPL.FAIL.GRP1 = "Application":Y.DELIM:"Function":Y.DELIM:"Source Transaction ID":Y.DELIM:"Target Transaction ID"
+                    R.TGT.UPL.FAIL.GRP1<-1> = Y.ERR.MSG.TOT
+                    WRITE R.TGT.UPL.FAIL.GRP1 TO F.TGT.UPL.FAIL.GRP, Y.ERR.GRP.ID
+                END ELSE
+                    R.TGT.UPL.FAIL.GRP1<-1> = Y.ERR.MSG.TOT
+                    WRITE R.TGT.UPL.FAIL.GRP1 TO F.TGT.UPL.FAIL.GRP, Y.ERR.GRP.ID
+                END
+            END
+            J++
+        REPEAT
+        I++
+    REPEAT
+    RETURN
+END
+
+
+
+

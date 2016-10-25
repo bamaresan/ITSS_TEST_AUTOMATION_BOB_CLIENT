@@ -1,0 +1,613 @@
+*-----------------------------------------------------------------------------
+* <Rating>1346</Rating>
+*-----------------------------------------------------------------------------
+    SUBROUTINE TAUT.OFS.UPLOAD.TARGET(OFS.QUEUE.ID)
+*-----------------------------------------------------------------------------
+* Program Description
+*-----------------------------------------------------------------------------
+* Modification History :
+* 20160923   - Fix after integration of AA. - Sunder
+* 20160926   - Fix done for checking ID of existing related tables. - Sunder
+* 20160927   - Redisgned to Multithreaded program to resolve Transaction boundary issue - Sunder
+* 20160927   - Added logic for restrict the obsolete fields in AA and
+*              amend the OFS string incase of any mandatory field is introduced in target area's AA property class
+* 2016-09-29 - Added new logic for AA, when the new arrangement and update activity for same arrangement
+*              happens, then the system will pass the correct arrangement id.
+* 2016-10-04 - Restrict the job when the error exceeds the parameterised in TAUT.PARAMETER
+* 20161004 - To handle date changes between source and target environment. - Sunder
+*20161006 - Update the date logic for AA. maheswaran j
+*-----------------------------------------------------------------------------
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT I_F.STANDARD.SELECTION
+    $INSERT I_XML.EQUATE
+    $INSERT I_GTS.COMMON
+    $INCLUDE TAUT.BP I_F.TAUT.PARAMETER
+    $INCLUDE TAUT.BP I_F.TAUT.APPL.DETAILS
+    $INCLUDE TAUT.BP I_F.TAUT.APPL.CHANGE
+    $INSERT I_F.AA.PROPERTY
+    $INCLUDE TAUT.BP I_TAUT.OFS.UPLOAD.TARGET.COMMON
+    $INSERT I_System
+*2016-10-04 BEGIN
+    IF Y.ERROR.CNT GT Y.ALLOWED.ERR THEN
+        RETURN
+    END
+*END
+
+    GOSUB LOAD.OFS.MESSAGE
+    GOSUB MAIN.PROCESS
+    GOSUB UPDATE.REPORTS
+
+
+    RETURN
+
+LOAD.OFS.MESSAGE:
+******************
+    R.FAILED.REPORT = ''
+    R.TAUT.UPLD.DONE.RPT = ''
+    Y.TARGET.APPS = ''
+    LOG.LEVEL = ''
+    GOSUB READ.OFS.QUEUE
+    SOURCE.OFS.ARR = R.STORE.FWD.QUEUE
+    CONVERT ',' TO FM IN SOURCE.OFS.ARR
+    SRC.OFS.MESSAGE = R.STORE.FWD.QUEUE
+    OFS.APPLICATION.NAME = FIELD(OFS.QUEUE.ID,'_',2)
+    Y.OPERATOR = FIELD(OFS.QUEUE.ID,'_',6)
+    Y.TARGET.APPS := OFS.APPLICATION.NAME:VM
+    OPERATOR =  Y.OPERATOR
+    Y.SOURCE.APP.ID = FIELD(OFS.QUEUE.ID,'_',3)
+
+    Y.FUN = FIELD(OFS.QUEUE.ID,'_',4)
+
+*20160926 - S
+    TR.OFS.SS.REC = ''
+    CALL GET.STANDARD.SELECTION.DETS(OFS.APPLICATION.NAME,TR.OFS.SS.REC)
+
+    TR.FIELD.NAME.LIST = TR.OFS.SS.REC<SSL.SYS.FIELD.NAME>
+
+    Y.APPLICATION.NAME = OFS.APPLICATION.NAME
+    IF OFS.APPLICATION.NAME MATCHES "STANDING.ORDER":VM:"BULK.STO":VM:"TELLER.ID" THEN
+
+        Y.AMEND.FLAG = 1
+    END ELSE
+        GOSUB REL.FILE.CHECK
+    END
+    IF Y.AMEND.FLAG EQ "" THEN
+        Y.APPLICATION.NAME = ""
+        LOCATE "@ID" IN TR.FIELD.NAME.LIST<1,1> SETTING ID.VM.POS THEN
+            Y.APPLICATION.NAME = TR.OFS.SS.REC<SSL.SYS.REL.FILE,ID.VM.POS>
+            IF NOT(Y.APPLICATION.NAME) THEN
+                Y.APPLICATION.NAME = TR.OFS.SS.REC<SSL.SYS.CNV.TYPE,ID.VM.POS>
+            END
+            IF Y.APPLICATION.NAME THEN
+                GOSUB REL.FILE.CHECK
+            END
+        END
+    END
+*20160926 - E
+    LOCATE OFS.APPLICATION.NAME IN R.TAUT.APPL.CHANGE.SYS<TAUT.APC.OB.APPLICATION,1> SETTING POS THEN
+        LOG.LEVEL = 1         ;*Fatal
+        TAUT.TEXT = 'This Application has been made OB: ':OFS.APPLICATION.NAME
+        GOSUB UPDATE.TAUT.LOG
+        RETURN
+    END
+
+    IF OFS.APPLICATION.NAME = "LD.LOANS.AND.DEPOSITS" THEN
+        TR.LDS.OFS.SS.REC = ''
+        CALL GET.STANDARD.SELECTION.DETS("LD.SCHEDULE.DEFINE",TR.LDS.OFS.SS.REC)
+        Y.TR.LDS.FIELD.NAME.LIST = TR.LDS.OFS.SS.REC<SSL.SYS.FIELD.NAME>
+        TR.FIELD.NAME.LIST := VM:Y.TR.LDS.FIELD.NAME.LIST
+    END
+    TR.SYS.TYPE.LIST   = TR.OFS.SS.REC<SSL.SYS.TYPE>
+    TR.SYS.VAL.PROG.LIST   = TR.OFS.SS.REC<SSL.SYS.VAL.PROG>
+
+    R.TAUT.APPL.CHANGE = ''
+    CALL F.READ(FN.TAUT.APPL.CHANGE,OFS.APPLICATION.NAME,R.TAUT.APPL.CHANGE,F.TAUT.APPL.CHANGE,CHG.READ.ERR)
+
+    RETURN
+
+READ.OFS.QUEUE:
+***************
+    READ R.STORE.FWD.QUEUE FROM F.STORE.FWD.QUEUE,OFS.QUEUE.ID ELSE
+        LOG.LEVEL = 1         ;*Fatal
+        TAUT.TEXT = 'Cannot Find the STORE OFS QUEUE Record: ':OFS.QUEUE.ID
+        GOSUB UPDATE.TAUT.LOG
+        RETURN
+    END
+
+    READ R.TAUT.OFS.TARGET FROM F.TAUT.STORE.JOURNAL,OFS.QUEUE.ID ELSE
+        LOG.LEVEL = 1         ;*Fatal
+        TAUT.TEXT = 'Cannot Find the JNL Record: ':OFS.QUEUE.ID
+        GOSUB UPDATE.TAUT.LOG
+        RETURN
+    END
+
+    RETURN
+
+MAIN.PROCESS:
+*------------
+
+    G.SPARE1 = OFS.QUEUE.ID
+    CALL System.setVariable("MASTER.JNL.ID",OFS.QUEUE.ID)
+
+    GOSUB SRC.OFS.FIELD.CHECK
+    GOSUB TG.MANDATORY.FIELD.CHECK
+    GOSUB CALL.OFS.BULK.MANAGER
+
+
+    RETURN
+
+SRC.OFS.FIELD.CHECK:
+********************
+    TARGET.FIELDS.OB = ''
+    SRC.OFS.FIELD.NAME.ARR = ''
+    TARGET.OFS.FIELD.NAME.ARR = ''
+    Y.AA.FLAG = ''
+    NO.FIELDS = DCOUNT(SRC.OFS.MESSAGE,',')
+    TARGET.OFS = FIELDS(SRC.OFS.MESSAGE,',',1,4)
+    Y.PROPERTY.CNT = 1
+    Y.OLD.FIELD.CNT = ''
+    Y.FIELD.VM.CNT = 1
+    Y.FIELD.CNT = 0
+
+
+    FOR IDX.NO = 5 TO NO.FIELDS
+
+        Y.OLD.FIELD.CNT = Y.FIELD.VM.CNT
+        LOC.VM.POS = 0
+        Y.OFS.STR.VAL = FIELD(SRC.OFS.MESSAGE,',',IDX.NO)
+        SRC.OFS.FIELD.NAME = FIELD(Y.OFS.STR.VAL,":",1)
+        IF Y.AA.FLAG EQ '1' AND SRC.OFS.FIELD.NAME EQ 'FIELD.NAME' THEN
+            Y.FIELD.NAME = FIELD(SRC.OFS.FIELD.NAME,":",1)
+            Y.OFS.STR.VAL = FIELD(Y.OFS.STR.VAL,'=',1)
+            Y.FIELD.VM.CNT = FIELD(Y.OFS.STR.VAL,":",3)
+*           SRC.OFS.FIELD.NAME = FIELD(FIELD(SRC.OFS.MESSAGE,',',IDX.NO),":",1)
+            SRC.OFS.FIELD.NAME = FIELD(FIELD(SRC.OFS.MESSAGE,',',IDX.NO),"=",2)
+            Y.VAL = SRC.OFS.FIELD.NAME
+            SRC.OFS.FIELD.NAME = FIELD(SRC.OFS.FIELD.NAME,':',1)
+            Y.LAST.FIELD = SRC.OFS.FIELD.NAME
+        END
+        IF SRC.OFS.FIELD.NAME EQ 'FIELD.VALUE' THEN
+            Y.SRC.OFS.FIELD.NAME = SRC.OFS.FIELD.NAME
+            SRC.OFS.FIELD.NAME = FIELD(FIELD(SRC.OFS.MESSAGE,',',IDX.NO),"=",2)
+*2016-10-05 date calculation for AA
+            CALL TAUT.OFS.DATE.VALUE.CHK(OFS.APPLICATION.NAME,Y.LAST.FIELD,SRC.OFS.FIELD.NAME,Y.RET.VALUE)
+            IF Y.RET.VALUE THEN
+                Y.VAL = Y.RET.VALUE
+            END ELSE
+                Y.VAL = SRC.OFS.FIELD.NAME
+            END
+*2016-10-05 end
+
+            R.AA.PROPERTY = ''
+            TARGET.OFS := ',':Y.SRC.OFS.FIELD.NAME:':':Y.FIELD.PROP.CNT:':':Y.FIELD.VM.CNT:'=':Y.VAL
+            CONTINUE
+        END
+
+
+        IF SRC.OFS.FIELD.NAME EQ 'PROPERTY' THEN
+            Y.OFS.FIELD.NAME = SRC.OFS.FIELD.NAME
+            Y.AA.FLAG = 1
+            SRC.OFS.FIELD.NAME = FIELD(FIELD(SRC.OFS.MESSAGE,',',IDX.NO),"=",2)
+            CALL F.READ(FN.AA.PROPERTY, SRC.OFS.FIELD.NAME, R.AA.PROPERTY, F.AA.PROPERTY, Y.ERR.PROP)
+            IF NOT(R.AA.PROPERTY) OR Y.OLD.FIELD.CNT LE '0' THEN
+                Y.PROPERTY.CNT--
+            END
+*20160927
+            Y.PROP.CLASS = R.AA.PROPERTY<AA.PROP.PROPERTY.CLASS>
+            OFS.APPLICATION.NAME = 'AA.ARR.':Y.PROP.CLASS
+            TR.OFS.SS.REC = ''
+            CALL GET.STANDARD.SELECTION.DETS(OFS.APPLICATION.NAME,TR.OFS.SS.REC)
+            TR.FIELD.NAME.LIST = TR.OFS.SS.REC<SSL.SYS.FIELD.NAME>
+            TR.SYS.TYPE.LIST   = TR.OFS.SS.REC<SSL.SYS.TYPE>
+            TR.SYS.VAL.PROG.LIST   = TR.OFS.SS.REC<SSL.SYS.VAL.PROG>
+
+            CALL F.READ(FN.AA.PROPERTY, Y.LAST.PROPERTY, R.AA.PROPERTY1, F.AA.PROPERTY, Y.ERR.PROP1)
+            Y.PROP.CLASS1 = R.AA.PROPERTY1<AA.PROP.PROPERTY.CLASS>
+            Y.LAST.PROP.CLASS = 'AA.ARR.':Y.PROP.CLASS1
+            R.TAUT.APPL.CHANGE = ''
+*Checking the mandatory fields in target environment.
+            CALL F.READ(FN.TAUT.APPL.CHANGE,Y.LAST.PROP.CLASS,R.TAUT.APPL.CHANGE,F.TAUT.APPL.CHANGE,CHG.READ.ERR)
+            IF R.TAUT.APPL.CHANGE THEN
+                Y.MAND.FIELD.TOT = R.TAUT.APPL.CHANGE<TAUT.APC.MANDATORY.FIELDS>
+                Y.MAN.TOT.CNT = DCOUNT(Y.MAND.FIELD.TOT,VM)
+                IF NOT(Y.MAND.FIELD.TOT) THEN
+                    Y.MAN.TOT.CNT = 0
+                END
+                Y.MAN.CNT = 1
+                LOOP
+                WHILE Y.MAN.CNT LE Y.MAN.TOT.CNT
+                    Y.MAN.VALUE = R.TAUT.APPL.CHANGE<TAUT.APC.FIELD.VALUE,Y.MAN.CNT>
+                    Y.MAN.FIELD = Y.MAND.FIELD.TOT<1,Y.MAN.CNT>
+                    IF NOT(Y.MAN.VALUE) THEN
+                        Y.MAN.OFS:=',FIELD.NAME:':Y.FIELD.PROP.CNT:':':Y.FIELD.VM.CNT:'=':Y.MAN.FIELD:':1:1'
+                        Y.MAN.OFS:=',FIELD.VALUE:':Y.FIELD.PROP.CNT:':':Y.FIELD.VM.CNT:'=':Y.MAN.VALUE
+                        Y.FIELD.VM.CNT++
+                    END
+                    Y.MAN.CNT++
+                REPEAT
+            END
+*20160927
+            TARGET.OFS.FIELD.NAME.ARR<1,-1> = SRC.OFS.FIELD.NAME
+            TARGET.OFS.PROP = Y.MAN.OFS:',':Y.OFS.FIELD.NAME:':':Y.PROPERTY.CNT:'=':SRC.OFS.FIELD.NAME
+
+            Y.LAST.PROPERTY = SRC.OFS.FIELD.NAME
+            Y.TARGET.APPS := OFS.APPLICATION.NAME:VM
+            Y.FIELD.PROP.CNT = Y.PROPERTY.CNT
+            Y.PROPERTY.CNT++
+        END ELSE
+            SRC.OFS.FIELD.NAME.ARR<-1> =  SRC.OFS.FIELD.NAME
+            LOCATE SRC.OFS.FIELD.NAME IN TR.FIELD.NAME.LIST<1,1> SETTING LOC.VM.POS THEN
+                TARGET.OFS.FIELD.NAME.ARR<1,-1> = SRC.OFS.FIELD.NAME
+*20161004-S
+
+                Y.FLD = FIELD(FIELD(SRC.OFS.MESSAGE,',',IDX.NO),"=",1)
+                Y.VAL = FIELD(FIELD(SRC.OFS.MESSAGE,',',IDX.NO),"=",2)
+                Y.RET.VALUE = ''
+                IF Y.AA.FLAG NE '1' THEN          ;*Date logic for AA already done. so no need here.
+                    CALL TAUT.OFS.DATE.VALUE.CHK(OFS.APPLICATION.NAME,SRC.OFS.FIELD.NAME,Y.VAL,Y.RET.VALUE)
+                    IF Y.RET.VALUE THEN
+                        Y.VAL = Y.RET.VALUE
+                    END
+                END
+*20161004-E
+
+                IF Y.AA.FLAG EQ '1' THEN
+                    IF R.AA.PROPERTY THEN
+                        TARGET.OFS := ',':TARGET.OFS.PROP:',':Y.FIELD.NAME:':':Y.FIELD.PROP.CNT:':':Y.FIELD.VM.CNT:'=':Y.VAL
+                    END ELSE
+                        TARGET.OFS := ',':Y.FIELD.NAME:':':Y.FIELD.PROP.CNT:':':Y.FIELD.VM.CNT:'=':Y.VAL
+                    END
+                END ELSE
+*20161004-S
+*                    TARGET.OFS := ',':FIELD(SRC.OFS.MESSAGE,',',IDX.NO)
+                    TARGET.OFS := ',':Y.FLD:'=':Y.VAL
+*20161004-E
+                END
+            END ELSE
+                TARGET.FIELDS.OB<1,-1> = SRC.OFS.FIELD.NAME
+                IF Y.AA.FLAG EQ '1' THEN
+                    Y.FIELD.VM.CNT--
+                    IDX.NO++
+                END
+            END
+        END
+    NEXT IDX.NO
+
+    IF TARGET.FIELDS.OB THEN
+        LOG.LEVEL = 1         ;*Fatal
+        TAUT.TEXT = 'Fields Missing in this Application (Might be Removed): ': OFS.APPLICATION.NAME
+        GOSUB UPDATE.TAUT.LOG
+        RETURN
+    END
+
+    RETURN
+
+TG.MANDATORY.FIELD.CHECK:
+*************************
+    IF OFS.APPLICATION.NAME MATCHES "LD.LOANS.AND.DEPOSITS":VM:"SWAP" THEN RETURN
+
+    Y.APPL.CNT = DCOUNT(Y.TARGET.APPS,VM)
+    I = 1
+    LOOP
+    WHILE I LE Y.APPL.CNT
+        Y.APPL.NAME = Y.TARGET.APPS<1,I>
+        CALL F.READ(FN.TAUT.APPL.CHANGE,Y.APPL.NAME,R.TAUT.APPL.CHANGE,F.TAUT.APPL.CHANGE,CHG.READ.ERR)
+        NO.OF.MD.FIELD = DCOUNT(R.TAUT.APPL.CHANGE<TAUT.APC.MANDATORY.FIELDS>,VM)
+        FOR MPOS=1 TO NO.OF.MD.FIELD
+            MD.FIELD.NAME = R.TAUT.APPL.CHANGE<TAUT.APC.MANDATORY.FIELDS,MPOS>
+            LOCATE MD.FIELD.NAME IN SRC.OFS.FIELD.NAME.ARR SETTING MFOUND.POS ELSE
+*20160923 - S
+*                TARGET.OFS := ',': MD.FIELD.NAME :"::=":R.TAUT.APPL.CHANGE<TAUT.APC.FIELD.VALUE,MPOS>
+*20160923 - E
+            END
+        NEXT MPOS
+        I++
+    REPEAT
+    RETURN
+
+CALL.OFS.BULK.MANAGER:
+**********************
+
+    theResponses = ""
+    Y.FAILED.REASON = ""
+    Y.FAIL.REASON = ""
+
+    IF TARGET.OFS EQ "" THEN RETURN
+
+    SAVE.APP = APPLICATION
+    SAVE.V = V
+    OFS.SRC.ID.BACKUP = OFS$SOURCE.ID
+    OFS.SRC.REC.BACKUP = OFS$SOURCE.REC
+
+    OFS$SOURCE.ID = OFS.SRC.ID
+    OFS$SOURCE.REC = R.OFS.SOURCE
+    Y.APPL = FIELD(TARGET.OFS,',',1)
+    Y.AA.INP.FLAG = ''
+
+*20160923 - S
+
+    Y.APPL = FIELD(TARGET.OFS,',',1)
+
+*2016-09-29 START : Update the source arrangment with the new arrangement.
+    GOSUB UPDATE.NEW.ARRANGEMENT
+*2016-09-29 STOP
+    IF NOT(Y.AMEND.FLAG) AND Y.FUN EQ 'I' THEN
+        NO.OF.FIELDS = DCOUNT(TARGET.OFS,',')
+        TARGET.OFS = FIELDS(TARGET.OFS,',',1,3):",,":FIELDS(TARGET.OFS,",",5,NO.OF.FIELDS)
+    END
+
+*20160923 - E
+
+    Y.SOURCE.APP.ID = FIELD(OFS.QUEUE.ID,'_',3)
+
+    IF Y.FUN EQ 'I' THEN
+        Y.AA.INP.FLAG = 1
+        R.TAUT.W.NEW.ID.REF = ''
+        CALL F.READ(FN.TAUT.W.NEW.ID.REF, Y.SOURCE.APP.ID, R.TAUT.W.NEW.ID.REF, F.TAUT.W.NEW.ID.REF, Y.TAUT.ERR)
+    END
+
+    IF (Y.FUN EQ 'A' OR Y.FUN EQ 'D' OR Y.FUN EQ 'R') AND NOT(Y.AMEND.FLAG) THEN
+
+*20160923 - S
+
+        TARGET.OFS = FIELDS(TARGET.OFS,',',1,3):","
+        R.TAUT.W.NEW.ID.REF = ''
+        CALL F.READ(FN.TAUT.W.NEW.ID.REF, Y.SOURCE.APP.ID, R.TAUT.W.NEW.ID.REF, F.TAUT.W.NEW.ID.REF, Y.TAUT.ERR)
+*       READ R.TAUT.W.NEW.ID.REF FROM F.TAUT.W.NEW.ID.REF,Y.SOURCE.APP.ID THEN
+
+*20160923 - E
+        IF R.TAUT.W.NEW.ID.REF THEN
+
+            TARGET.OFS:=R.TAUT.W.NEW.ID.REF
+        END ELSE
+            TAUT.TEXT = 'OFS Message Failed' :" * ": TARGET.OFS
+            GOSUB UPDATE.TAUT.LOG
+            IF BATCH.DETAILS<3> EQ '' THEN
+                GOSUB UPDATE.TGT.UPL.REPEAT
+            END
+            Y.FAILED.REASON = "Target application id missing in concat file"
+            Y.TARG.APP.ID = ""
+            Y.ORD.ID = ""
+            GOSUB UPDATE.FAILED.REPORT
+            RETURN
+        END
+    END
+
+*   IF Y.SOURCE.APP.ID[1,2] EQ "AA" THEN
+    SAVE.APP = APPLICATION
+    SAVE.V = V
+    OFS.SRC.ID.BACKUP = OFS$SOURCE.ID
+    OFS.SRC.REC.BACKUP = OFS$SOURCE.REC
+
+    OFS$SOURCE.ID = OFS.SRC.ID
+    OFS$SOURCE.REC = R.OFS.SOURCE
+
+    theRequests = TARGET.OFS
+    theResponses = ''
+    requestCommitted = ''
+    CALL OFS.BULK.MANAGER(theRequests, theResponses, requestCommitted)
+    APPLICATION = SAVE.APP
+    V = SAVE.V
+    OFS$SOURCE.ID  = OFS.SRC.ID.BACKUP
+    OFS$SOURCE.REC = OFS.SRC.REC.BACKUP
+
+    Y.OFS.MSG.ERROR.PART = theResponses['/',3,1]
+    ERROR.FLAG = Y.OFS.MSG.ERROR.PART[',',1,1]
+    OFS.TXN.ID   = FIELD(theResponses,'/',1)
+    Y.ORD.ID = FIELD(theResponses,"/",2,1)
+
+*20160923 - S
+*        IF Y.AA.INP.FLAG EQ '1' THEN
+*            Y.AAA.ID.REF = theResponses['/',1,1]
+*            Y.AAA.ID = Y.AAA.ID.REF[20,20]
+*            R.TAUT.W.NEW.ID.REF = Y.AAA.ID.REF
+*            WRITE R.TAUT.W.NEW.ID.REF TO F.TAUT.W.NEW.ID.REF,Y.SOURCE.APP.ID
+*            CALL F.WRITE(FN.TAUT.W.NEW.ID.REF, Y.AAA.REF.ID, R.TAUT.W.NEW.ID.REF)
+*    END
+*20160923 - E
+
+
+*    IF ERROR.FLAG = -1 THEN
+    IF requestCommitted NE 1 OR ERROR.FLAG = -1 THEN
+        Y.ERROR.CNT +=1
+        TAUT.TEXT = 'OFS Message Failed' :" * ": TARGET.OFS
+        GOSUB UPDATE.TAUT.LOG
+        IF BATCH.DETAILS<3> EQ '' THEN
+            GOSUB UPDATE.TGT.UPL.REPEAT
+        END
+        Y.FAIL.REASON = "OFS.FAILED"
+        Y.TARG.APP.ID = OFS.TXN.ID
+        Y.FAILED.REASON = FIELD(theResponses,",",2,1)
+        GOSUB UPDATE.FAILED.REPORT
+    END ELSE
+        IF Y.AA.INP.FLAG EQ '1' THEN
+            Y.AAA.ID.REF = theResponses['/',1,1]
+            GOSUB UPDATE.NEW.ARR.WITH.OLD.ARR     ;* Added for update the new arrangement with old arrangement
+            CHANGE "<requests><request>" TO '' IN Y.AAA.ID.REF
+            R.TAUT.W.NEW.ID.REF = ""
+            Y.TAUT.W.NEW.ID.REF.ERR = ""
+            CALL F.READ(FN.TAUT.W.NEW.ID.REF,Y.SOURCE.APP.ID,R.TAUT.W.NEW.ID.REF,F.TAUT.W.NEW.ID.REF,Y.TAUT.W.NEW.ID.REF.ERR)
+            IF R.TAUT.W.NEW.ID.REF EQ "" THEN
+                R.TAUT.W.NEW.ID.REF = Y.AAA.ID.REF
+*20160923 - S
+                CALL F.WRITE(FN.TAUT.W.NEW.ID.REF,Y.SOURCE.APP.ID,R.TAUT.W.NEW.ID.REF)
+*20160923 - E
+            END
+        END
+
+        READ R.TAUT.UPLD.DONE.RPT FROM F.TGT.UPL.REPORTS,Y.TGT.UPL.DONE.RPT.ID ELSE NULL
+        IF R.TAUT.UPLD.DONE.RPT EQ "" THEN
+            R.TAUT.UPLD.DONE.RPT = "Application":Y.DELIM:"Function":Y.DELIM:"Source Transaction ID":Y.DELIM:"Target Transaction ID"
+            R.TAUT.UPLD.DONE.RPT := FM:OFS.APPLICATION.NAME:Y.DELIM:Y.FUN:Y.DELIM:Y.SOURCE.APP.ID:Y.DELIM:R.TAUT.W.NEW.ID.REF
+        END ELSE
+            R.TAUT.UPLD.DONE.RPT := FM:OFS.APPLICATION.NAME:Y.DELIM:Y.FUN:Y.DELIM:Y.SOURCE.APP.ID:Y.DELIM:R.TAUT.W.NEW.ID.REF
+        END
+
+        WRITE SRC.OFS.MESSAGE TO F.TGT.UPLOAD.DONE,OFS.QUEUE.ID
+        IF BATCH.DETAILS<3> EQ 'RESUBMIT' THEN
+            DELETE F.TGT.UPL.REPEAT,OFS.QUEUE.ID
+            DELETE F.TGT.UPL.FAILED,OFS.QUEUE.ID
+        END ELSE
+            DELETE F.STORE.FWD.QUEUE,OFS.QUEUE.ID
+        END
+
+    END
+
+    RETURN
+
+UPDATE.NEW.ARRANGEMENT:
+*----------------------
+* If we are creating the arrangement and update the arrangement on same day.
+*On that time, the source arrangement id and target arrangement id will not be same
+* so we are reading the TARGET ARRANGEMENT with @id Source arrangement and replace the source arrangement with target arrangement.
+
+    IF Y.APPL EQ 'AA.ARRANGEMENT.ACTIVITY' THEN
+        Y.SEC.ARRAY = TARGET.OFS
+        CHANGE "," TO VM IN Y.SEC.ARRAY
+        CHANGE ":1:1=" TO SM IN Y.SEC.ARRAY
+        FIND "NARRATIVE" IN Y.SEC.ARRAY SETTING  Y.F.POS, Y.V.POS, Y.SM.POS THEN
+            Y.SOURCE.ARRANGEMENT.ID = Y.SEC.ARRAY<Y.F.POS,Y.V.POS,Y.SM.POS+1>
+        END
+        Y.SEC.ARRAY = ''
+        IF Y.FUN EQ 'I' THEN
+            R.TAUT.W.NEW.ID.REF1 = ''
+            CALL F.READ(FN.TAUT.W.NEW.ID.REF, Y.SOURCE.ARRANGEMENT.ID, R.TAUT.W.NEW.ID.REF1, F.TAUT.W.NEW.ID.REF, Y.TAUT.ERR)
+            IF R.TAUT.W.NEW.ID.REF1[1,2] EQ 'AA' THEN
+                TARGET.OFS = EREPLACE(TARGET.OFS,Y.SOURCE.ARRANGEMENT.ID,R.TAUT.W.NEW.ID.REF1)
+            END
+        END
+    END
+
+    RETURN
+
+UPDATE.NEW.ARR.WITH.OLD.ARR:
+*--------------------------
+*29-09-2016 start
+* If we are creating the arrangement and update the arrangement on same day.
+*On that time, the source arrangement id and target arrangement id will not be same
+* so we are checking the activity , if the activity is NEW-ARRANGEMENT of TAKEOVER-ARRANGEMENT then
+* we are storing the target arrangement with the @ID of source arrangement
+
+    Y.RETURN.ARRAY = theResponses
+    CHANGE "<request>" TO FM IN Y.RETURN.ARRAY
+    CHANGE "</request>" TO FM IN Y.RETURN.ARRAY
+    Y.SEC.ARRAY = Y.RETURN.ARRAY<2>
+    CHANGE "," TO VM IN Y.SEC.ARRAY
+    CHANGE ":1:1=" TO SM IN Y.SEC.ARRAY
+    FIND "ACTIVITY" IN Y.SEC.ARRAY SETTING Y.F.POS, Y.V.POS, Y.SM.POS THEN
+        Y.ACT.ID = Y.SEC.ARRAY<Y.F.POS,Y.V.POS,Y.SM.POS+1>
+        Y.ACTIVITY.VAL = FIELDS(Y.ACT.ID,'-',2)
+        Y.F.POS = ''
+        Y.V.POS = ''
+        Y.SM.POS = ''
+        IF Y.ACTIVITY.VAL EQ 'NEW' OR Y.ACTIVITY.VAL EQ 'TAKEOVER' THEN
+            FIND "ARRANGEMENT" IN Y.SEC.ARRAY SETTING  Y.F.POS, Y.V.POS, Y.SM.POS THEN
+                Y.ARRAGEMENT.ID = Y.SEC.ARRAY<Y.F.POS,Y.V.POS,Y.SM.POS+1>
+            END
+            IF Y.ARRAGEMENT.ID EQ Y.SOURCE.ARRANGEMENT.ID THEN
+                RETURN
+            END
+            R.TAUT.W.NEW.ID.REF1 = Y.ARRAGEMENT.ID
+            CALL F.WRITE(FN.TAUT.W.NEW.ID.REF, Y.SOURCE.ARRANGEMENT.ID, R.TAUT.W.NEW.ID.REF1)
+        END
+    END
+*29-09-2016 end
+
+    RETURN
+
+UPDATE.TAUT.LOG:
+****************
+    YID = ''
+    CALL ALLOCATE.UNIQUE.TIME(YID)
+    IF TAUT.TEXT THEN
+        IF T.LOG.LEVEL EQ 'FULL' THEN
+            BEGIN CASE
+            CASE LOG.LEVEL = 1
+                TAUT.TEXT = "Critical Error :" :TIMEDATE():" ":TAUT.TEXT
+            CASE LOG.LEVEL = 2
+                TAUT.TEXT = "Warning  :" :TIMEDATE():" ":TAUT.TEXT
+            CASE LOG.LEVEL = 3
+                TAUT.TEXT = "Info :" :TIMEDATE():" ":TAUT.TEXT
+            END CASE
+
+            WRITE TAUT.TEXT TO F.TAUT.LOG,YID
+        END
+
+        IF T.LOG.LEVEL EQ 'FATAL' AND LOG.LEVEL EQ 1 THEN
+            TAUT.TEXT = "Critical Error :" :TIMEDATE():" ":TAUT.TEXT
+            WRITE TAUT.TEXT TO F.TAUT.LOG,YID
+        END
+    END
+
+    TAUT.TEXT = ''
+    RETURN
+
+UPDATE.TGT.UPL.REPEAT:
+**********************
+* Move the failed cases to TGT.UPL.REPEAT folder to reprocess and delete the message from STORE.FWD.QUEUE.
+
+    WRITE SRC.OFS.MESSAGE TO F.TGT.UPL.REPEAT,OFS.QUEUE.ID
+    WRITE SRC.OFS.MESSAGE TO F.TGT.UPL.FAILED,OFS.QUEUE.ID
+    DELETE F.STORE.FWD.QUEUE,OFS.QUEUE.ID
+    RETURN
+
+UPDATE.FAILED.REPORT:
+*********************
+    READ R.FAILED.REPORT FROM F.TGT.UPL.REPORTS,Y.TGT.UPL.FAILED.REPORT.ID ELSE NULL
+    IF R.FAILED.REPORT = "" THEN
+        R.FAILED.REPORT = "Application name":Y.DELIM:"OFS id":Y.DELIM:"Target Application ID":Y.DELIM:"ORD ID":Y.DELIM:"Failed Reason"
+        R.FAILED.REPORT<-1> = OFS.APPLICATION.NAME:Y.DELIM:OFS.QUEUE.ID:Y.DELIM:Y.TARG.APP.ID:Y.DELIM:Y.ORD.ID:Y.DELIM:Y.FAILED.REASON
+    END ELSE
+        R.FAILED.REPORT := FM:OFS.APPLICATION.NAME:Y.DELIM:OFS.QUEUE.ID:Y.DELIM:Y.TARG.APP.ID:Y.DELIM:Y.ORD.ID:Y.DELIM:Y.FAILED.REASON
+    END
+
+    RETURN
+*20160926 - S
+*------------------------------------------------------------------------------------------------------------------------------------*
+REL.FILE.CHECK:
+*--------------*
+
+
+    FN.APP = "F.":Y.APPLICATION.NAME
+    F.APP = ""
+    CALL OPF(FN.APP,F.APP)
+
+    FN.APP.NAU = "F.":Y.APPLICATION.NAME:"$NAU"
+    F.APP.NAU = ""
+    CALL OPF(FN.APP.NAU,F.APP.NAU)
+
+    R.APP = ""
+    Y.APP.NAU.ERR = ""
+    Y.AMEND.FLAG = ""
+    Y.REL.FILE = ""
+
+    CALL F.READ(FN.APP.NAU,Y.SOURCE.APP.ID,R.APP,F.APP.NAU,Y.APP.NAU.ERR)
+    IF R.APP EQ "" THEN
+        Y.APP.ERR = ""
+        CALL F.READ(FN.APP,Y.SOURCE.APP.ID,R.APP,F.APP,Y.APP.ERR)
+    END
+    IF R.APP THEN
+        Y.AMEND.FLAG = 1
+    END
+
+    RETURN
+*20160926 - E
+*-----------------------------------------------------------------------------------------------------------*
+UPDATE.REPORTS:
+*--------------*
+
+    IF R.FAILED.REPORT THEN
+        WRITE R.FAILED.REPORT TO F.TGT.UPL.REPORTS,Y.TGT.UPL.FAILED.REPORT.ID
+    END
+
+    IF R.TAUT.UPLD.DONE.RPT THEN
+
+        WRITE R.TAUT.UPLD.DONE.RPT TO F.TGT.UPL.REPORTS,Y.TGT.UPL.DONE.RPT.ID
+    END
+
+    RETURN
+*-----------------------------------------------------------------------------------------------------------*
+END
+
+

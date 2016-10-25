@@ -1,0 +1,96 @@
+*-----------------------------------------------------------------------------
+* <Rating>-27</Rating>
+*-----------------------------------------------------------------------------
+    SUBROUTINE POST.OSFASTPATH(THE.REQUEST, THE.RESPONSE, RESPONSE.TYPE, STYLE.SHEET)
+*-----------------------------------------------------------------------------
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT I_S.COMMON
+    $INSERT I_GTS.COMMON
+    $INSERT I_BROWSER.TAGS
+    $INSERT I_ENQUIRY.COMMON
+    $INSERT I_F.ENQUIRY
+    $INSERT I_F.VERSION
+    $INSERT I_EB.EXTERNAL.COMMON
+    $INSERT I_F.OFS.SOURCE
+    $INSERT I_TSS.COMMON
+*-----------------------------------------------------------------------------
+
+    SAVE.TTYPE = TTYPE
+    TTYPE = 'EBS-GUI'
+    STYLE.SHEET = '/transforms/window.xsl'
+    RESPONSE.TYPE = 'XML.ENQUIRY'
+
+    GOSUB INITIALISE
+
+    GOSUB DO.PROCESS
+
+    RETURN
+
+*-----------------------------------------------------------------------------
+INITIALISE:
+    ACTION.STATUS = ''
+    ERROR.MSG = ''
+
+    RETURN
+
+*-----------------------------------------------------------------------------
+DO.PROCESS:
+
+    REQUEST = THE.REQUEST
+    RESPONSE = ''
+    REQUEST.COMMIT = ''
+
+    OFS.SOURCE.ID = OFS$SOURCE.ID       ;*save the ofs source id and record
+    OFS$SOURCE.ID = "FASTPATH"
+    SAVE.OFS.SOURCE.REC = OFS$SOURCE.REC
+
+    CALL CACHE.READ("F.OFS.SOURCE","FASTPATH",OFS.SOURCE.REC,OFS.ERROR)
+    OFS$SOURCE.REC = OFS.SOURCE.REC
+    GET.TTYPE = TTYPE         ;*save the TTYPE and GTSACTIVE values
+    TTYPE = ''
+    GET.VAR = GTSACTIVE
+
+    SAVE.OFS.REQUEST.TYPE = OFS$REQUEST.TYPE
+
+    IF TSS$CLIENTIP THEN
+        REQUEST = "<CLIENTIP>":TSS$CLIENTIP:"</CLIENTIP>":"<hostName>":TSS$HOST.NAME:"</hostName>":"<Channel>":TSS$CHANNEL:"</Channel>":REQUEST
+    END
+
+    BULKMODE = ''
+    CALL OFS.BULK.CHECK( THE.REQUEST, BULKMODE )  ;* to identify the bulk mode flag
+    IF BULKMODE EQ '' THEN
+        RESPONSE = THE.REQUEST
+        CALL OFS.GLOBUS.MANAGER(OFS$SOURCE.ID, RESPONSE)    ;* to enable the process for "W" type template records
+    END ELSE
+        CALL OFS.BULK.MANAGER(THE.REQUEST,RESPONSE,REQUEST.COMMIT)
+    END
+
+    OFS$REQUEST.TYPE = SAVE.OFS.REQUEST.TYPE
+
+    TTYPE = GET.TTYPE         ;*save the TTYPE and GTSACTIVE values
+    GTSACTIVE = GET.VAR
+    OFS$SOURCE.ID = OFS.SOURCE.ID       ;*restore the source id and record
+    OFS$SOURCE.REC = SAVE.OFS.SOURCE.REC
+
+    CRT 'POST.OS.FAST.PATH ---->':RESPONSE
+* check for error
+    IF FIELD(RESPONSE, '/', 3) < 0 THEN
+        ACTION.STATUS = "ERROR"
+        ERROR.MSG = FIELD(RESPONSE,'/',4)
+        IF ERROR.MSG = '' THEN
+            ERROR.MSG = RESPONSE
+        END
+        ETEXT = ''
+    END ELSE
+        ACTION.STATUS = "OK"
+    END
+    THE.RESPONSE = RESPONSE
+
+    RETURN
+
+*-----------------------------------------------------------------------------
+
+END
+
+

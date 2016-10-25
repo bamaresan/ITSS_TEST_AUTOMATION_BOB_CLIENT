@@ -1,0 +1,315 @@
+*-----------------------------------------------------------------------------
+* <Rating>1557</Rating>
+*-----------------------------------------------------------------------------
+    SUBROUTINE TUAT.COMPARE.SS.GEN.REPORT
+
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT I_F.STANDARD.SELECTION
+    $INSERT I_F.TAUT.APPL.CHANGE
+    $INSERT I_F.TAUT.PARAMETER
+    $INSERT I_F.PGM.FILE
+    $INSERT I_F.PGM.DATA.CONTROL
+
+    GOSUB INIT
+    GOSUB PROCESS
+
+    RETURN
+*-----------------------------------------------------------------------------------*
+INIT:
+*----*
+
+    FN.PGM.FILE = 'F.PGM.FILE'
+    F.PGM.FILE = ''
+    CALL OPF(FN.PGM.FILE, F.PGM.FILE)
+
+    FN.STANDARD.SELECTION = 'F.STANDARD.SELECTION'
+    F.STANDARD.SELECTION = ''
+    CALL OPF(FN.STANDARD.SELECTION,F.STANDARD.SELECTION)
+
+    FN.SAVE.SS ='SAVE.SS'
+    F.SAVE.SS  = ''
+    CALL OPF(FN.SAVE.SS,F.SAVE.SS)
+
+    FN.TAUT.APPL.CHANGE = 'F.TAUT.APPL.CHANGE'
+    F.TAUT.APPL.CHANGE = ''
+    CALL OPF(FN.TAUT.APPL.CHANGE,F.TAUT.APPL.CHANGE)
+
+    FN.PGM.DATA.CONTROL = 'F.PGM.DATA.CONTROL'
+    F.PGM.DATA.CONTROL = ''
+    CALL OPF(FN.PGM.DATA.CONTROL, F.PGM.DATA.CONTROL)
+
+    FN.TAUT.PARAM = 'F.TAUT.PARAMETER'
+    F.TAUT.PARAM = ''
+    CALL OPF(FN.TAUT.PARAM,F.TAUT.PARAM)
+
+    R.TAUT.PARAM = ''
+    TAUT.PARAM.READ.ERR = ''
+    CALL F.READ(FN.TAUT.PARAM,'SYSTEM',R.TAUT.PARAM,F.TAUT.PARAM,TAUT.PARAM.READ.ERR)
+
+    IF R.TAUT.PARAM THEN
+        FN.TGT.UPL.REPORTS= R.TAUT.PARAM<TAUT.TGT.UPL.REPORTS>
+        F.TGT.UPL.REPORTS = ""
+        CALL OPF(FN.TGT.UPL.REPORTS,F.TGT.UPL.REPORTS)
+        Y.TIME.DATE = TIMEDATE()
+        CONVERT ":" TO "-" IN Y.TIME.DATE
+        CONVERT " " TO "-" IN Y.TIME.DATE
+        Y.TGT.OB.APPS.ID  = "SS_Compare_Obsolete_Applications.csv"
+        Y.TGT.NEW.APPS.ID = "SS_Compare_New_Applications.csv"
+        Y.TGT.NEW.FLDS.ID = "SS_Compare_New_Fields.csv"
+        Y.TGT.OB.FLDS.ID  = "SS_Compare_Obsolete_Fields.csv"
+        Y.TGT.FLD.TYPE.ID = "SS_Compare_Field_Type_Mismatch.csv"
+        Y.TGT.FLD.LEN.ID  = "SS_Compare_Field_Length_Mismatch.csv"
+        Y.TGT.MND.FLDS.ID = "SS_Compare_Field_Mandatory_fields.csv"
+        Y.TGT.COMP.SS.FILE.NAME = "/filename=":FN.TGT.UPL.REPORTS:"\":Y.TIME.DATE:"_SS_Compare_Report.xls"
+        XL.PARAMS.ID = ""
+        XL.PARAMS.ID = Y.TGT.COMP.SS.FILE.NAME:" ":"/sheetname="
+*       XL.PARAMS.SHEET.ID = " ":"/sheetname="
+        XL.PARAMS.SHEET.ID = ","
+        R.TGT.NEW.FLDS.RPT = ''
+        R.TGT.OB.FLDS.RPT = ''
+        R.TGT.MND.FLDS.RPT = ''
+
+    END
+
+    RETURN
+*-----------------------------------------------------------------------------------*
+PROCESS:
+*-------*
+    R.TAUT.APPL.CHANGE = ''
+    CALL F.READ(FN.TAUT.APPL.CHANGE,"SYSTEM",R.TAUT.APPL.CHANGE,F.TAUT.APPL.CHANGE,Y.TAUT.APP.ERR)
+    IF R.TAUT.APPL.CHANGE<TAUT.APC.OB.APPLICATION> NE '' THEN
+        GOSUB OB.APPLICATION
+    END
+    IF R.TAUT.APPL.CHANGE<TAUT.APC.NEW.APPLICATION> NE '' THEN
+        GOSUB NEW.APPLICATION
+    END
+
+    GOSUB MODIFIED.FIELDS
+
+    CHANGE ".csv" TO "" IN XL.PARAMS
+
+    CALL TAUT.EXCEL.EXPORT(XL.PARAMS,INPUT.DATA)
+
+    RETURN
+*------------------------------------------------------------------------------------*
+OB.APPLICATION:
+*-------------*
+
+    Y.OB.APPLICATIONS = R.TAUT.APPL.CHANGE<TAUT.APC.OB.APPLICATION>
+    CONVERT VM TO FM IN Y.OB.APPLICATIONS
+    R.TGT.UPL.REPORTS = "Obselete Applications"
+    R.TGT.UPL.REPORTS := FM:Y.OB.APPLICATIONS
+
+    CALL F.WRITE(FN.TGT.UPL.REPORTS,Y.TGT.OB.APPS.ID,R.TGT.UPL.REPORTS)
+    CONVERT FM TO VM IN R.TGT.UPL.REPORTS
+
+    XL.PARAMS = XL.PARAMS.ID:Y.TGT.OB.APPS.ID
+    INPUT.DATA = R.TGT.UPL.REPORTS
+
+
+
+    RETURN
+*------------------------------------------------------------------------------------*
+NEW.APPLICATION:
+*---------------*
+
+    Y.TGT.UPL.DONE.ID = Y.TGT.NEW.APPS.ID
+    Y.NEW.APPLICATIONS = R.TAUT.APPL.CHANGE<TAUT.APC.NEW.APPLICATION>
+    CONVERT VM TO FM IN Y.NEW.APPLICATIONS
+    R.TGT.UPL.REPORTS = "New Applications"
+    R.TGT.UPL.REPORTS:= FM:Y.NEW.APPLICATIONS
+
+    CALL F.WRITE(FN.TGT.UPL.REPORTS,Y.TGT.NEW.APPS.ID,R.TGT.UPL.REPORTS)
+
+    CONVERT FM TO VM IN R.TGT.UPL.REPORTS
+    XL.PARAMS := XL.PARAMS.SHEET.ID:Y.TGT.NEW.APPS.ID
+    INPUT.DATA := FM:R.TGT.UPL.REPORTS
+
+    RETURN
+
+*------------------------------------------------------------------------------------*
+MODIFIED.FIELDS:
+*--------------*
+    GOSUB FIELD.CHECK
+
+    Y.SEL.CMD = "SELECT ":FN.SAVE.SS
+    Y.SEL.LIST = ''
+    R.TGT.VAL.PRGM = ''
+    R.TGT.UPL.DISP.FMT = ''
+    CALL EB.READLIST(Y.SEL.CMD,Y.SEL.LIST,'','','')
+
+    LOOP
+
+        REMOVE Y.SS.ID FROM Y.SEL.LIST SETTING SS.POS
+
+    WHILE Y.SS.ID:SS.POS
+        CALL F.READ(FN.SAVE.SS,Y.SS.ID,R.SOURCE.SS,F.SAVE.SS,LV.SS.ERR)
+        IF R.SOURCE.SS THEN
+            CALL GET.STANDARD.SELECTION.DETS(Y.SS.ID,R.TARGET.SS)     ;* TO merge the Core & Local Ref fields Together .
+            IF R.TARGET.SS THEN
+                NO.OF.FIELDS = DCOUNT(R.TARGET.SS<SSL.SYS.FIELD.NAME>,@VM)
+                FOR I =1 TO NO.OF.FIELDS
+                    IF R.TARGET.SS<SSL.SYS.FIELD.NO,I>[1,9] NE 'LOCAL.REF' AND NOT(NUM(R.TARGET.SS<SSL.SYS.FIELD.NO,I>)) THEN CONTINUE      ;* NO need Other than Local.ref AND Core fields.
+
+                    LOCATE R.TARGET.SS<SSL.SYS.FIELD.NAME,I> IN R.SOURCE.SS<SSL.SYS.FIELD.NAME,1> SETTING VMPOS THEN
+                        IF R.TARGET.SS<SSL.SYS.TYPE,I> EQ "I" OR R.TARGET.SS<SSL.SYS.TYPE,I> EQ "J" ELSE
+                            IF R.TARGET.SS<SSL.SYS.VAL.PROG,I> NE R.SOURCE.SS<SSL.SYS.VAL.PROG,VMPOS> THEN
+                                Y.TGT.UPL.DONE.ID = Y.TGT.FLD.TYPE.ID
+                                IF R.TGT.VAL.PRGM EQ '' THEN
+*                                    R.TGT.VAL.PRGM = "Change of field type in existing applications"
+                                    R.TGT.VAL.PRGM  = "Application Name":",":"Field Name":",":"Source Field type":",":"Target Field Type"
+                                    R.TGT.VAL.PRGM<-1> = Y.SS.ID:",":R.TARGET.SS<SSL.SYS.FIELD.NAME,I>:",":R.SOURCE.SS<SSL.SYS.VAL.PROG,VMPOS>:",":R.TARGET.SS<SSL.SYS.VAL.PROG,I>
+                                END ELSE
+                                    R.TGT.VAL.PRGM<-1> = Y.SS.ID:",":R.TARGET.SS<SSL.SYS.FIELD.NAME,I>:",":R.SOURCE.SS<SSL.SYS.VAL.PROG,VMPOS>:",":R.TARGET.SS<SSL.SYS.VAL.PROG,I>
+                                END
+                            END
+                        END
+                        IF R.TARGET.SS<SSL.SYS.DISPLAY.FMT,I> NE R.SOURCE.SS<SSL.SYS.DISPLAY.FMT,VMPOS> THEN
+
+                            IF R.TGT.UPL.DISP.FMT EQ '' THEN
+*                                R.TGT.UPL.DISP.FMT = "Change of field format in existing applications"
+                                R.TGT.UPL.DISP.FMT  = "Application Name":",":"Field Name":",":"Source Field format":",":"Target Field format"
+                                R.TGT.UPL.DISP.FMT<-1> = Y.SS.ID:",":R.TARGET.SS<SSL.SYS.FIELD.NAME,I>:",":R.SOURCE.SS<SSL.SYS.DISPLAY.FMT,VMPOS>:",":R.TARGET.SS<SSL.SYS.DISPLAY.FMT,I>
+                            END ELSE
+                                R.TGT.UPL.DISP.FMT<-1> = Y.SS.ID:",":R.TARGET.SS<SSL.SYS.FIELD.NAME,I>:",":R.SOURCE.SS<SSL.SYS.DISPLAY.FMT,VMPOS>:",":R.TARGET.SS<SSL.SYS.DISPLAY.FMT,I>
+                            END
+                        END
+                    END
+                NEXT I
+            END
+        END
+    REPEAT
+
+    CALL F.WRITE(FN.TGT.UPL.REPORTS,Y.TGT.FLD.LEN.ID,R.TGT.UPL.DISP.FMT)
+    CALL F.WRITE(FN.TGT.UPL.REPORTS,Y.TGT.FLD.TYPE.ID,R.TGT.VAL.PRGM)
+
+    CONVERT FM TO VM IN R.TGT.UPL.DISP.FMT
+    CONVERT FM TO VM IN R.TGT.VAL.PRGM
+
+*    XL.PARAMS := VM:Y.TGT.FLD.LEN.ID:VM:Y.TGT.FLD.TYPE.ID
+*    INPUT.DATA := VM:R.TGT.UPL.DISP.FMT:VM:R.TGT.VAL.PRGM
+
+    XL.PARAMS := XL.PARAMS.SHEET.ID:Y.TGT.FLD.TYPE.ID
+    INPUT.DATA := FM:R.TGT.VAL.PRGM
+
+    XL.PARAMS := XL.PARAMS.SHEET.ID:Y.TGT.FLD.LEN.ID
+    INPUT.DATA := FM:R.TGT.UPL.DISP.FMT
+
+
+
+
+    RETURN
+*---------------------------------------------------------------------------------------------*
+FIELD.CHECK:
+*----------*
+
+    Y.SEL.CMD = "SELECT ":FN.TAUT.APPL.CHANGE:" WITH  MANDATORY.FIELDS NE '' OR  NEW.FIELDS NE '' OR OB.FIELDS NE ''"
+
+    CALL EB.READLIST(Y.SEL.CMD,Y.LIST,'','','')
+
+    LOOP
+
+        REMOVE Y.TAUT.APPL.CHANGE.ID FROM Y.LIST SETTING TAUT.POS
+
+    WHILE Y.TAUT.APPL.CHANGE.ID:TAUT.POS
+
+        Y.TAUT.APPL.CHANGE.ERR = ''
+        R.TAUT.APPL.CHANGE = ''
+        Y.MANDATORY.FIELDS = '' ; Y.NEW.FIELDS = '' ; Y.OB.FIELDS = ''
+        CALL F.READ(FN.TAUT.APPL.CHANGE,Y.TAUT.APPL.CHANGE.ID,R.TAUT.APPL.CHANGE,F.TAUT.APPL.CHANGE,Y.TAUT.APPL.CHANGE.ERR)
+
+        IF Y.TAUT.APPL.CHANGE.ERR THEN CONTINUE
+
+        Y.MANDATORY.FIELDS = R.TAUT.APPL.CHANGE<TAUT.APC.MANDATORY.FIELDS>
+        Y.NEW.FIELDS = R.TAUT.APPL.CHANGE<TAUT.APC.NEW.FIELDS>
+        Y.OB.FIELDS = R.TAUT.APPL.CHANGE<TAUT.APC.OB.FIELDS>
+        Y.APPL = ''
+        IF Y.MANDATORY.FIELDS THEN
+            Y.TGT.UPL.DONE.ID = Y.TGT.MND.FLDS.ID
+            CONVERT VM TO FM IN Y.MANDATORY.FIELDS
+            Y.COUNT = DCOUNT(Y.MANDATORY.FIELDS,FM)
+            FOR I = 1 TO Y.COUNT
+                IF R.TGT.MND.FLDS.RPT EQ '' THEN
+*R.TGT.MND.FLDS.RPT = "Mandatory fields in existing Applications"
+                    R.TGT.MND.FLDS.RPT  = "Application Name":",":"Field Name"
+                    R.TGT.MND.FLDS.RPT<-1> = Y.TAUT.APPL.CHANGE.ID:",":Y.MANDATORY.FIELDS<I>
+                END ELSE
+                    IF I = 1 THEN
+                        R.TGT.MND.FLDS.RPT<-1> = Y.TAUT.APPL.CHANGE.ID:",":Y.MANDATORY.FIELDS<I>
+                    END ELSE
+                        R.TGT.MND.FLDS.RPT<-1> =" ":",":Y.MANDATORY.FIELDS<I>
+                    END
+                END
+            NEXT I
+
+        END
+
+        IF Y.NEW.FIELDS THEN
+            Y.TGT.UPL.DONE.ID = Y.TGT.NEW.FLDS.ID
+            CONVERT VM TO FM IN Y.NEW.FIELDS
+            Y.COUNT = DCOUNT(Y.NEW.FIELDS,FM)
+            Y.APPL = ''
+            FOR I = 1 TO Y.COUNT
+                IF R.TGT.NEW.FLDS.RPT EQ '' THEN
+*                    R.TGT.NEW.FLDS.RPT = "New fields in existing Applications"
+                    R.TGT.NEW.FLDS.RPT  = "Application Name":",":"Field Name"
+                    R.TGT.NEW.FLDS.RPT<-1> = Y.TAUT.APPL.CHANGE.ID:",":Y.NEW.FIELDS<I>
+                END ELSE
+                    IF I = 1 THEN
+                        R.TGT.NEW.FLDS.RPT<-1> = Y.TAUT.APPL.CHANGE.ID:",":Y.NEW.FIELDS<I>
+                    END ELSE
+                        R.TGT.NEW.FLDS.RPT<-1> = " ":",":Y.NEW.FIELDS<I>
+                    END
+                END
+
+            NEXT I
+
+        END
+
+        IF Y.OB.FIELDS THEN
+            Y.TGT.UPL.DONE.ID = Y.TGT.OB.FLDS.ID
+            CONVERT VM TO FM IN Y.OB.FIELDS
+            Y.COUNT = DCOUNT(Y.OB.FIELDS,FM)
+            Y.APPL = ''
+            FOR I = 1 TO Y.COUNT
+                IF R.TGT.OB.FLDS.RPT EQ '' THEN
+*                    R.TGT.OB.FLDS.RPT = "New fields in existing Applications"
+                    R.TGT.OB.FLDS.RPT = "Application Name":",":"Field Name"
+                    R.TGT.OB.FLDS.RPT<-1> = Y.TAUT.APPL.CHANGE.ID:",":Y.OB.FIELDS<I>
+                END ELSE
+                    IF I = 1 THEN
+                        R.TGT.OB.FLDS.RPT<-1> = Y.TAUT.APPL.CHANGE.ID:",":Y.OB.FIELDS<I>
+                    END ELSE
+                        R.TGT.OB.FLDS.RPT<-1> = " ":",":Y.OB.FIELDS<I>
+                    END
+                END
+            NEXT I
+        END
+
+    REPEAT
+*    XL.PARAMS := VM:Y.TGT.MND.FLDS.ID:VM:Y.TGT.NEW.FLDS.ID:VM:Y.TGT.OB.FLDS.ID
+*    INPUT.DATA := VM:R.TGT.MND.FLDS.RPT:VM:R.TGT.NEW.FLDS.RPT:VM:R.TGT.OB.FLDS.RPT
+
+    CALL F.WRITE(FN.TGT.UPL.REPORTS,Y.TGT.MND.FLDS.ID,R.TGT.MND.FLDS.RPT)
+    CALL F.WRITE(FN.TGT.UPL.REPORTS,Y.TGT.NEW.FLDS.ID,R.TGT.NEW.FLDS.RPT)
+    CALL F.WRITE(FN.TGT.UPL.REPORTS,Y.TGT.OB.FLDS.ID,R.TGT.OB.FLDS.RPT)
+
+    CONVERT FM TO VM IN R.TGT.MND.FLDS.RPT
+    CONVERT FM TO VM IN R.TGT.NEW.FLDS.RPT
+    CONVERT FM TO VM IN R.TGT.OB.FLDS.RPT
+
+    XL.PARAMS := XL.PARAMS.SHEET.ID:Y.TGT.MND.FLDS.ID
+    INPUT.DATA := FM:R.TGT.MND.FLDS.RPT
+
+    XL.PARAMS := XL.PARAMS.SHEET.ID:Y.TGT.NEW.FLDS.ID
+    INPUT.DATA := FM:R.TGT.NEW.FLDS.RPT
+
+    XL.PARAMS := XL.PARAMS.SHEET.ID:Y.TGT.OB.FLDS.ID
+    INPUT.DATA := FM:R.TGT.OB.FLDS.RPT
+
+
+    RETURN
+*-------------------------------------------------------------------------------------------------------------*
+END
+

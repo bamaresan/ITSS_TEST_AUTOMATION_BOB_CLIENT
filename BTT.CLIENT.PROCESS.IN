@@ -1,0 +1,209 @@
+*--------------------------------------------------------------------------------
+*-----------------------------------------------------------------------------
+* <Rating>44</Rating>
+*-----------------------------------------------------------------------------
+    SUBROUTINE BTT.CLIENT.PROCESS.IN(MSG)
+*--------------------------------------------------------------------------------
+
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+* $INSERT I_F.BTT.CLIENT.APPL
+    $INSERT I_System
+    INCLUDE JBC.h
+
+    COM/BTT.CLIENT/BTT.INIT, BTT.LOGIN.REQ, REQ.START.TIME, REQUEST.TYPE, REQ.ENQ.NAME, REQ.CRIT.ARGS, FN.BTT.REQUEST, F.BTT.REQUEST, REQ.FROM, FN.BTT.CLIENT.APPL, F.BTT.CLIENT.APPL, FN.BTT.CLIENT.LOGIN, F.BTT.CLIENT.LOGIN, BTT.REQ.TOKEN, REQ.MSG, BTT.TXN
+*--------------------------------------------------------------------------------
+
+    REQ.MSG = MSG
+
+    GOSUB INITIALISE
+
+* GOSUB PROCESS
+
+    RETURN
+
+*--------------------------------------------------------------------------------
+INITIALISE:
+
+    BTT.LOGIN.REQ = 0
+
+    IF NOT(BTT.INIT) THEN
+        FN.BTT.REQUEST = 'F.BTT.REQUEST'
+        F.BTT.REQUEST = ''
+        CALL OPF(FN.BTT.REQUEST, F.BTT.REQUEST)
+
+*        FN.BTT.CLIENT.APPL = 'F.BTT.CLIENT.APPL' ; F.BTT.CLIENT.APPL = ''
+*   CALL OPF(FN.BTT.CLIENT.APPL, F.BTT.CLIENT.APPL)
+
+        FN.BTT.CLIENT.LOGIN = 'F.BTT.CLIENT.LOGIN' ; F.BTT.CLIENT.LOGIN = ''
+        CALL OPF(FN.BTT.CLIENT.LOGIN, F.BTT.CLIENT.LOGIN)
+
+        BTT.INIT = 1
+    END
+
+    IF INDEX(MSG,'BROWSER.XML',1) THEN
+        REQ.START.TIME = '' ; REQUEST.TYPE = '' ; REQ.IO.STATS = '' ; REQ.ENQ.NAME = '' ; RE.ENQ.COMP = '' ; REQ.USER = '' ; REQ.CRIT.ARGS = '' ; REQ.FROM = ''
+        REQ.FROM = 'BROWSER'
+        GOSUB PROCESS.BROWSER
+    END
+
+    RETURN
+
+*--------------------------------------------------------------------------------
+PROCESS.BROWSER:
+*---------------
+
+    BTT.PROCESS.MSG = ''
+
+    THE.TAG.NAME = "<requestType>"
+    GOSUB GET.TAG.VALUE
+    REQUEST.TYPE = THE.TAG.VALUE
+
+    THE.TAG.NAME = "<compScreen>"
+    GOSUB GET.TAG.VALUE
+    REQ.APPL.USER = THE.TAG.VALUE['_',2,1]
+
+    THE.TAG.NAME = "<routineName>"
+    GOSUB GET.TAG.VALUE
+    REQ.UTIL.NAME = THE.TAG.VALUE
+
+    THE.TAG.NAME = "<routineArgs>"
+    GOSUB GET.TAG.VALUE
+    REQ.UTIL.ARGS = THE.TAG.VALUE
+
+    THE.TAG.NAME = "<token>"
+    GOSUB GET.TAG.VALUE
+    REQ.OS.TOKEN = THE.TAG.VALUE
+    REQ.OS.TOKEN.VAL = REQ.OS.TOKEN[':',1,1]
+
+    TIME.VAL = CHANGE(OCONV(TIME(),'MTS'),':',''):MOD(SYSTEM(12),1000)
+    SYSDATE = OCONV(DATE(),'DY4'):OCONV(DATE(),'DM'):OCONV(DATE(),'DD')
+
+    IF REQUEST.TYPE EQ 'CREATE.SESSION' THEN
+        BTT.LOGIN.REQ = 1
+        BTT.REQ.TOKEN = ''
+        enc = JBASE_CRYPT_3DES_BASE64
+
+        THE.TAG.NAME = "<BTT.TOKEN>"
+        GOSUB GET.TAG.VALUE
+        BTT.REQ.TOKEN = THE.TAG.VALUE
+
+        THE.TAG.NAME = "<password>"
+        GOSUB GET.TAG.VALUE
+        PASS.ENC.VAL = THE.TAG.VALUE
+
+        PASS.VAL = DECRYPT(PASS.ENC.VAL, BTT.REQ.TOKEN, enc)
+        CHANGE '<BTT.TOKEN>':BTT.REQ.TOKEN:'</BTT.TOKEN>' TO '' IN MSG
+        CHANGE '<password>':PASS.ENC.VAL:'</password>' TO '<password>':PASS.VAL:'</password>' IN MSG
+
+    END ELSE
+        READ.ERR = ''
+        READU R.BTT.CLIENT.LOGIN FROM F.BTT.CLIENT.LOGIN, REQ.OS.TOKEN.VAL ELSE READ.ERR = 'RECORD NOT FOUND'
+        IF NOT(READ.ERR) THEN
+            BTT.TOKEN = R.BTT.CLIENT.LOGIN<1>
+            BTT.SEQ = R.BTT.CLIENT.LOGIN<2>
+            R.BTT.CLIENT.LOGIN<2> += 1
+            CHANGE REQ.OS.TOKEN TO BTT.TOKEN:':':BTT.SEQ IN MSG
+            WRITE R.BTT.CLIENT.LOGIN TO F.BTT.CLIENT.LOGIN, REQ.OS.TOKEN.VAL ON ERROR CRT 'U T W ':REQ.APPL.USER
+        END
+
+        THE.TAG.NAME = "<application>"
+        GOSUB GET.TAG.VALUE
+        REQ.APPL.NAME = THE.TAG.VALUE
+*  CALL F.READ(FN.BTT.CLIENT.APPL, REQ.APPL.NAME, R.BTT.CLIENT.APPL, F.BTT.CLIENT.APPL, READ.ERR)
+
+        THE.TAG.NAME = "<BTT.TXN>"
+        GOSUB GET.TAG.VALUE
+        BTT.TXN = THE.TAG.VALUE
+        CHANGE '<BTT.TXN>':BTT.REQ.TOKEN:'</BTT.TXN>' TO '' IN MSG
+        IF BTT.TXN THEN
+            REQ.ENQ.NAME = BTT.TXN
+        END ELSE
+            REQ.ENQ.NAME = ''
+        END
+
+    END
+
+    IF REQ.UTIL.NAME EQ 'OS.FAST.PATH' THEN
+        CHANGE REQ.UTIL.NAME TO 'POST.OSFASTPATH' IN MSG
+
+        THE.TAG.NAME = "<ofsRequest>"
+        GOSUB GET.TAG.VALUE
+        REQ.UTIL.ARGS1 = THE.TAG.VALUE
+
+        CHANGE '<ofsRequest>':REQ.UTIL.ARGS1:'</ofsRequest>' TO '' IN MSG
+
+        CHANGE REQ.UTIL.ARGS TO REQ.UTIL.ARGS1 IN MSG
+
+        CRT 'Modified OS.FAST.PATH request ---->':MSG
+    END
+
+    IF INDEX(MSG, 'MASTER.JNL.ID', 1) THEN
+        THE.TAG.NAME = "<MASTER.JNL.ID>"
+        GOSUB GET.TAG.VALUE
+        MASTER.JNL.ID = THE.TAG.VALUE
+
+        CHANGE '<MASTER.JNL.ID>':MASTER.JNL.ID:'</MASTER.JNL.ID>' TO '' IN MSG
+
+        CALL System.setVariable("MASTER.JNL.ID", MASTER.JNL.ID)
+    END
+
+    RETURN
+
+*--------------------------------------------------------------------------------
+GET.TAG.VALUE:
+*-------------
+
+* Pull out the contents of a given tag.
+
+    WORK.TAG = THE.TAG.NAME
+    THE.TAG.VALUE = ''
+    SPOS = 0
+    EPOS = 0
+    START.POS = 0
+
+    IF ( (MSG) AND (WORK.TAG) ) THEN
+
+* Remove '<' and '>' characters from tag name if passed in
+        CONVERT '<' TO '' IN WORK.TAG
+        CONVERT '>' TO '' IN WORK.TAG
+
+        IF INDEX(MSG, WORK.TAG, 2) <> 0 THEN      ;* If there is not at least 2 occourances there is no value
+            START.POS = INDEX(MSG,WORK.TAG: '>',1)          ;* get the starting position of the tag
+            EPOS = INDEX(MSG, '</':WORK.TAG,1)    ;* get the end position of the tag
+            IF START.POS AND EPOS THEN  ;* if start tag and end tag present then
+                SPOS = START.POS+1+LEN(WORK.TAG)  ;* calculate the position of the tag value in the message
+                THE.TAG.VALUE = MSG[SPOS, EPOS-SPOS]        ;* extract the tag value
+            END
+        END
+    END
+
+    RETURN
+
+
+*--------------------------------------------------------------------------------
+*PROCESS:
+
+* MSG.SAVE = MSG
+* MSG = TRIM(MSG, "", "D")
+* CHANGE CHAR('9') TO '' IN MSG
+*    IF R.BTT.CLIENT.APPL<BTT.CLT.APP.OBSOLETE.FLDS> NE '' THEN
+*  DCNT = DCOUNT(R.BTT.CLIENT.APPL<BTT.CLT.APP.OBSOLETE.FLDS>, VM)
+*  FOR I=1 TO DCNT
+*   FLD.START.LEN = LEN('<field><fieldName>')
+*   FLD.VAL.LEN = LEN(R.BTT.CLIENT.APPL<BTT.CLT.APP.OBSOLETE.FLDS, I>)
+*   FLD.START.VAL = INDEX(MSG, R.BTT.CLIENT.APPL<BTT.CLT.APP.OBSOLETE.FLDS, I>, 1)
+*   IF FLD.START.LEN THEN
+*    FLD.START.POS = FLD.START.VAL - FLD.START.LEN
+*    FLD.END.POS = INDEX(MSG[FLD.START.POS,999999] ,'</value>', 1) + 7
+*   END
+*   CHANGE MSG[FLD.START.POS, FLD.END.POS] TO '' IN MSG
+*  NEXT I
+
+* END
+*    RETURN
+
+*--------------------------------------------------------------------------------
+
+END
+

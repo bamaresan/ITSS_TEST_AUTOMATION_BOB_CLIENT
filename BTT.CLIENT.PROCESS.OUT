@@ -1,0 +1,206 @@
+*--------------------------------------------------------------------------------
+*-----------------------------------------------------------------------------
+* <Rating>349</Rating>
+*-----------------------------------------------------------------------------
+    SUBROUTINE BTT.CLIENT.PROCESS.OUT(MSG)
+*--------------------------------------------------------------------------------
+
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT I_GTS.COMMON
+    $INSERT I_EB.TRANS.COMMON
+    $INSERT I_BROWSER.TAGS
+    $INSERT I_XML.EQUATE
+    $INSERT I_F.OFS.STATUS.FLAG
+* $INSERT I_F.BTT.CLIENT.APPL
+
+    COM/BTT.CLIENT/BTT.INIT, BTT.LOGIN.REQ, REQ.START.TIME, REQUEST.TYPE, REQ.ENQ.NAME, REQ.CRIT.ARGS, FN.BTT.REQUEST, F.BTT.REQUEST, REQ.FROM, FN.BTT.CLIENT.APPL, F.BTT.CLIENT.APPL, FN.BTT.CLIENT.LOGIN, F.BTT.CLIENT.LOGIN, BTT.REQ.TOKEN, REQ.MSG, BTT.TXN
+*--------------------------------------------------------------------------------
+
+    TXN.SUCCESSFULL = 0
+    TXN.ERROR = 0
+
+    CRT "OFS$PARENT.ID : ":OFS$PARENT.ID
+    CRT "OFS$OVERRIDES : ":OFS$OVERRIDES
+    CRT "OFS$GETRECORD : ":OFS$GETRECORD
+    CRT "OFS$NEWRECORD : ":OFS$NEWRECORD
+    CRT "OFS$ETEXT : ":OFS$ETEXT
+    CRT "OFS$MESSAGE.TEXT : ":OFS$MESSAGE.TEXT
+    CRT "OFS$TXN.COMPLETE : ":OFS$TXN.COMPLETE
+    CRT "OFS$SUPRESS.TXN.COMPLETE : ":OFS$SUPRESS.TXN.COMPLETE
+    CRT "OFS$BROWSER.MESSAGES : ":OFS$BROWSER.MESSAGES
+    CRT "OFS$CHANGED.FIELDS : ":OFS$CHANGED.FIELDS
+    CRT "OFS$STATUS : ":OFS$STATUS
+    CRT "OFS$MESSAGE : ":OFS$MESSAGE
+    CRT "OFS$REQUEST.TYPE : ":OFS$REQUEST.TYPE
+    CRT "OFS$BROWSER : ":OFS$BROWSER
+    CRT "OFS$NO.CHANGE : ":OFS$NO.CHANGE
+    CRT "OFS$AUTH : ":OFS$AUTH
+    CRT "OFS$RECORD.READ : ":OFS$RECORD.READ
+    CRT "OFS$BUILD.ERROR : ":OFS$BUILD.ERROR
+    CRT "ordDetails : ":ordDetails
+
+    GOSUB PROCESS
+
+    RETURN
+
+*--------------------------------------------------------------------------------
+PROCESS:
+
+    GOSUB SET.COMMON
+
+    IF BTT.LOGIN.REQ THEN
+
+        MSG.TAG = MSG
+        GOSUB PROCESS.BROWSER
+
+        R.BTT.CLIENT.LOGIN<1> = TOKEN.VAL
+        R.BTT.CLIENT.LOGIN<2> = 1
+
+        READU DUMMY.REC FROM F.BTT.CLIENT.LOGIN, BTT.REQ.TOKEN ELSE NULL
+
+        WRITE R.BTT.CLIENT.LOGIN TO F.BTT.CLIENT.LOGIN, BTT.REQ.TOKEN ON ERROR
+            CRT 'UNABLE TO WRITE ':BTT.REQ.TOKEN:' IN BTT.CLIENT.LOGIN'
+        END
+
+    END ELSE
+        IF OFS$STATUS<STAT.FLAG.TXN.SUCCESSFUL> EQ 1 THEN
+            TXN.SUCCESSFUL = 1
+        END ELSE
+            IF OFS$STATUS<STAT.FLAG.TXN.FAILED> OR OFS$ETEXT THEN TXN.ERROR = 1
+        END
+    END
+    REQ.RESP.MSG = ''
+    REQ.RESP.MSG = REQ.MSG
+*    IF NOT(INDEX(BTT.TXN,'CREATE.SESSION',1))
+    IF NOT(BTT.LOGIN.REQ) THEN
+        IF TXN.SUCCESSFUL THEN
+            MSG := '<BTT.TXN.MSG>Txn Complete ':OFS$PARENT.ID['_',2,1]:'</BTT.TXN.MSG>'
+*      REQ.RESP.MSG<-1> = MSG:'<BTT.TXN.MSG>Txn Complete ':OFS$PARENT.ID['_',2,1]:'</BTT.TXN.MSG>'
+            REQ.RESP.MSG<-1> = MSG
+        END ELSE
+            BTT.ERR.MSG = CHANGE(CHANGE(CHANGE(OFS$ETEXT, @FM, ' '), @VM, ' '), @SM, ' ')
+            CRT 'BTT.ERR.MSG : ':BTT.ERR.MSG
+            MSG := '<BTT.TXN.MSG>Txn Failed ':OFS$PARENT.ID['_',2,1]:'</BTT.TXN.MSG>':'<BTT.TXN.ERRMSG>':BTT.ERR.MSG:'</BTT.TXN.ERRMSG>'
+*      REQ.RESP.MSG<-1> = MSG:'<BTT.TXN.MSG>Txn Failed ':OFS$PARENT.ID['_',2,1]:'</BTT.TXN.MSG>':'<BTT.TXN.ERRMSG>':BTT.ERR.MSG:'</BTT.TXN.ERRMSG>'
+            REQ.RESP.MSG<-1> = MSG
+        END
+    END
+
+    WRITE REQ.RESP.MSG TO F.BTT.REQUEST, REQ.ENQ.NAME ON ERROR
+        CRT 'Unable to WRITE request to BTT.REQUEST for txn ':REQ.ENQ.NAME
+    END
+
+    RETURN
+
+*--------------------------------------------------------------------------------
+SET.COMMON:
+*----------
+
+    MATBUILD R.NEW.VAL FROM R.NEW
+    MATBUILD R.OLD.VAL FROM R.OLD
+    MATBUILD R.NEW.LAST.VAL FROM R.NEW.LAST
+
+    TIME.VAL = CHANGE(OCONV(TIME(),'MTS'),':',''):MOD(SYSTEM(12),1000)
+    SYSDATE = OCONV(DATE(),'DY4'):OCONV(DATE(),'DM'):OCONV(DATE(),'DD')
+    IF R.OLD.VAL OR R.NEW.LAST.VAL THEN BTT.CHECK.TXN = 'AMEND TXN' ELSE BTT.CHECK.TXN = 'NEW TXN'
+
+    CRT 'BTT.CHECK.TXN : ':BTT.CHECK.TXN
+    MSG.TAG = REQ.MSG
+
+    THE.TAG.NAME = "<requestType>"
+    GOSUB GET.TAG.VALUE
+    REQUEST.TYPE = THE.TAG.VALUE
+
+    IF REQ.ENQ.NAME EQ '' THEN
+        IF REQUEST.TYPE EQ 'OFS.APPLICATION' THEN
+            THE.TAG.NAME = "<application>"
+            GOSUB GET.TAG.VALUE
+            REQ.APPL.NAME = THE.TAG.VALUE
+
+            THE.TAG.NAME = "<version>"
+            GOSUB GET.TAG.VALUE
+            REQ.APPL.VER = THE.TAG.VALUE
+
+            THE.TAG.NAME = "<ofsFunction>"
+            GOSUB GET.TAG.VALUE
+            REQ.APPL.FUNC = THE.TAG.VALUE
+
+            THE.TAG.NAME = "<transactionId>"
+            GOSUB GET.TAG.VALUE
+            REQ.APPL.ID = THE.TAG.VALUE
+
+            THE.TAG.NAME = "<ofsOperation>"
+            GOSUB GET.TAG.VALUE
+            REQ.APPL.OPER = THE.TAG.VALUE
+
+            MSG.TAG = MSG
+            THE.TAG.NAME = "<title>"
+            GOSUB GET.TAG.VALUE
+            RESP.TITLE = THE.TAG.VALUE
+            CHANGE ' ' TO '_' IN RESP.TITLE
+
+            REQ.ENQ.NAME = SYSDATE:'*':TODAY:'-':TIME.VAL:'-':REQ.APPL.NAME:REQ.APPL.VER:'-':REQ.APPL.FUNC:'-':REQ.APPL.ID:'-':REQ.APPL.OPER:'-':BTT.TXN:'-':RESP.TITLE
+        END
+        IF REQUEST.TYPE EQ 'CREATE.SESSION' THEN
+            REQ.ENQ.NAME = SYSDATE:'*':TODAY:'-':TIME.VAL:'-':REQUEST.TYPE
+        END
+    END
+
+    RETURN
+
+*--------------------------------------------------------------------------------
+PROCESS.BROWSER:
+*---------------
+
+    BTT.PROCESS.MSG = ''
+
+    THE.TAG.NAME = "<token>"
+    GOSUB GET.TAG.VALUE
+    TOKEN.VAL = THE.TAG.VALUE
+
+    THE.TAG.NAME = "<companyId>"
+    GOSUB GET.TAG.VALUE
+    REQ.COMP.ID = THE.TAG.VALUE
+
+    THE.TAG.NAME = "<user>"
+    GOSUB GET.TAG.VALUE
+    REQ.USER.ID = THE.TAG.VALUE
+
+    RETURN
+
+*--------------------------------------------------------------------------------
+GET.TAG.VALUE:
+*-------------
+
+* Pull out the contents of a given tag.
+
+    WORK.TAG = THE.TAG.NAME
+    THE.TAG.VALUE = ''
+    SPOS = 0
+    EPOS = 0
+    START.POS = 0
+
+    IF ( (MSG.TAG) AND (WORK.TAG) ) THEN
+
+* Remove '<' and '>' characters from tag name if passed in
+        CONVERT '<' TO '' IN WORK.TAG
+        CONVERT '>' TO '' IN WORK.TAG
+
+        IF INDEX(MSG.TAG, WORK.TAG, 2) <> 0 THEN  ;* If there is not at least 2 occourances there is no value
+            START.POS = INDEX(MSG.TAG,WORK.TAG: '>',1)      ;* get the starting position of the tag
+            EPOS = INDEX(MSG.TAG, '</':WORK.TAG,1)          ;* get the end position of the tag
+            IF START.POS AND EPOS THEN  ;* if start tag and end tag present then
+                SPOS = START.POS+1+LEN(WORK.TAG)  ;* calculate the position of the tag value in the message
+                THE.TAG.VALUE = MSG[SPOS, EPOS-SPOS]        ;* extract the tag value
+            END
+        END
+    END
+
+    RETURN
+
+*--------------------------------------------------------------------------------
+
+END
+
+

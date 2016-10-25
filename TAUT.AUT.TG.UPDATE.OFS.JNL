@@ -1,0 +1,168 @@
+*-----------------------------------------------------------------------------
+* <Rating>263</Rating>
+*-----------------------------------------------------------------------------
+*Modification History:-
+*20160923  - Amaresan - No.Input , No.Change field will be identified based on the Input Version.
+*                       So, T() has been captured in Version.control.
+*                       But for Authorise routine it is not required . So , Always empty value passed.
+*20160926 - Amaresan - J4 file has been introduced to avoid overlapping issue
+*-----------------------------------------------------------------------------
+    SUBROUTINE TAUT.AUT.TG.UPDATE.OFS.JNL
+
+    $INSERT I_COMMON
+    $INSERT I_EQUATE
+    $INSERT I_F.SPF
+    $INSERT I_IO.EQUATE
+    $INSERT I_GTS.COMMON
+    $INSERT I_F.OFS.SOURCE
+    $INSERT I_System
+    $INSERT I_F.AA.ARRANGEMENT.ACTIVITY
+    $INSERT I_AA.LOCAL.COMMON
+    $INCLUDE TAUT.BP I_F.TAUT.PARAMETER
+
+    GOSUB OPEN.FILES
+    IF Y.TYPE EQ 'SESSION' THEN RETURN
+    IF FOLDER.NOT.FOUND OR PARAM.NOT.FOUND THEN RETURN
+    GOSUB LOAD.SYSTEM.VAR
+
+    IF NOT(E) AND NOT(RETURN.FLAG) THEN GOSUB PROCESS
+
+    RETURN
+
+OPEN.FILES:
+*-----------
+    FN.TAUT.PARAM = 'F.TAUT.PARAMETER'
+    F.TAUT.PARAM = ''
+    CALL OPF(FN.TAUT.PARAM,F.TAUT.PARAM)
+
+    R.TAUT.PARAM = ''
+    PARAM.NOT.FOUND = ''
+    FOLDER.NOT.FOUND = ''
+    CALL F.READ(FN.TAUT.PARAM,"SYSTEM",R.TAUT.PARAM,F.TAUT.PARAM,'')
+    IF R.TAUT.PARAM THEN
+        FN.SAVE.JNL = "F.TAUT.STORE.JNL"
+        F.SAVE.JNL = ''
+        IF FN.SAVE.JNL THEN
+            CALL OPF(FN.SAVE.JNL,F.SAVE.JNL)
+        END
+
+        FN.STORE.TXNS= "F.TAUT.STORE.TXN"
+        F.STORE.TXNS= ''
+        IF FN.STORE.TXNS THEN
+            CALL OPF(FN.STORE.TXNS,F.STORE.TXNS)
+        END
+
+*        T.LOG.LEVEL = R.TAUT.PARAM<TAUT.LOG.LEVEL>
+
+*        FN.TAUT.LOG = R.TAUT.PARAM<TAUT.LOG.FILE>
+*        F.TAUT.LOG = ''
+*        IF FN.TAUT.LOG THEN
+*            CALL OPF(FN.TAUT.LOG,F.TAUT.LOG)
+*        END
+
+        IF NOT(FN.SAVE.JNL)  OR NOT(FN.STORE.TXNS) THEN
+            FOLDER.NOT.FOUND = 1
+        END
+    END ELSE
+        PARAM.NOT.FOUND = 1
+    END
+
+    Y.OFS.SOURCE = OFS$SOURCE.ID
+
+    FN.OFS.SOURCE = 'F.OFS.SOURCE'
+    F.OFS.SOURCE = ''
+    CALL OPF(FN.OFS.SOURCE, F.OFS.SOURCE)
+
+    CALL F.READ(FN.OFS.SOURCE, Y.OFS.SOURCE, R.OFS, F.OFS.SOURCE, Y.ERR)
+    Y.TYPE = R.OFS<OFS.SRC.SOURCE.TYPE>
+
+    RETURN
+
+
+LOAD.SYSTEM.VAR:
+****************
+
+    Y.FUN = V$FUNCTION
+    SAVE.E = E
+    Y.MASTER.JNL.ID.AUT = System.getVariable("MASTER.JNL.ID.AUT")
+
+    IF E THEN
+        E = ''
+    END
+
+    IF NOT(Y.MASTER.JNL.ID.AUT) OR (Y.MASTER.JNL.ID.AUT EQ 'MASTER.JNL.ID.AUT') THEN
+        IF G.SPARE1 THEN
+            CALL System.setVariable("MASTER.JNL.ID.AUT",G.SPARE1)
+            Y.MASTER.JNL.ID.AUT = G.SPARE1
+            G.SPARE1 = ''
+        END ELSE
+*            Y.MASTER.JNL.ID.AUT = System.getVariable("MASTER.JNL.ID.AUT")
+            RETURN.FLAG = 1
+            IF E THEN
+                E = ''
+            END
+        END
+    END
+    E = SAVE.E
+    RETURN
+
+PROCESS:
+********
+
+    R.APPL.OFS.TXN = ''
+    R.APPL.REC = '' ; R.TARRAY = ''
+    SAVE.JNL.FWT = ''
+
+    Y.SAVE.FWT = FWT
+
+    X = 0
+    LOOP
+        REMOVE F.FL.NAME FROM Y.SAVE.FWT SETTING REMOVE$
+    WHILE F.FL.NAME:REMOVE$
+        X +=1
+        Y.FWF = FWF(X)
+        Y.FWF = TRIM(Y.FWF,'',"D")
+        IF Y.FWF[1,1] EQ 'W' OR Y.FWF[1,1] EQ 'L' THEN
+            IF SAVE.JNL.FWT THEN
+                SAVE.JNL.FWT := @VM :F.FL.NAME
+            END ELSE
+                SAVE.JNL.FWT = F.FL.NAME
+            END
+        END
+    REPEAT
+
+    IF SAVE.JNL.FWT THEN
+        R.JNL.REC = ''
+        CALL F.READ(FN.SAVE.JNL,Y.MASTER.JNL.ID,R.JNL.REC,F.SAVE.JNL,'')
+
+        IF R.JNL.REC THEN
+            R.JNL.REC := @VM : SAVE.JNL.FWT
+        END ELSE
+            R.JNL.REC = SAVE.JNL.FWT
+        END
+        IF R.JNL.REC THEN
+            CALL F.WRITE(FN.SAVE.JNL,Y.MASTER.JNL.ID,R.JNL.REC)
+            R.JNL.REC = ''
+        END
+    END
+
+    IF SAVE.JNL.FWT THEN
+        MATBUILD R.APPL.REC FROM R.NEW
+        R.APPL.REC = LOWER(R.APPL.REC)
+
+        CALL F.READ(FN.STORE.TXNS,Y.MASTER.JNL.ID,R.APPL.OFS,F.STORE.TXNS,'')
+        IF  R.APPL.OFS THEN
+            R.APPL.OFS := FM: APPLICATION:"_":ID.NEW:"%%":R.APPL.REC:"%%":R.TARRAY
+        END ELSE
+            R.APPL.OFS = APPLICATION:"_":ID.NEW:"%%":R.APPL.REC:"%%":R.TARRAY
+        END
+
+        IF R.APPL.OFS THEN
+            CALL F.WRITE(FN.STORE.TXNS,Y.MASTER.JNL.ID,R.APPL.OFS)
+            R.APPL.OFS = ''
+        END
+    END
+    SAVE.JNL.FWT = '' ; Y.MASTER.JNL.ID = '' ; R.APPL.REC = ''
+    RETURN
+END
+
